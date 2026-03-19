@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>BKA Scramble Pro</title>
+    
+    <link rel="icon" type="image/png" href="icon.png" sizes="192x192">
+    <link rel="apple-touch-icon" href="icon.png">
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+</head>
+<body data-theme="space">
+
+<div class="container">
+    <div class="top-nav">
+        <button onclick="openModal('settingsModal')" style="background:none; border:none; font-size:24px; cursor:pointer;">⚙️</button>
+        <div class="progress-container"><div id="progress-fill"></div></div>
+        <div style="color:var(--coin); font-weight:bold; font-size:18px;">💰 <span id="coin-count">0</span></div>
+    </div>
+
+    <div id="map-screen">
+        <h2 style="color:var(--accent); letter-spacing: 2px;">WORLD TOUR</h2>
+        <div class="level-grid" id="level-grid"></div>
+    </div>
+
+    <div id="game-screen" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+            <button onclick="showMap()" style="background:#444; border:none; color:white; padding:8px 12px; border-radius:8px; cursor:pointer;">⬅</button>
+            <div id="game-level-title" style="font-weight:bold; font-size: 18px;">LVL 1</div>
+            <div style="display:flex; gap:5px;">
+                <button class="btn buy-btn" onclick="buyHint()">HINT (20)</button>
+                <button class="btn buy-btn" onclick="skipLevel()">SKIP (100)</button>
+            </div>
+        </div>
+        
+        <div id="timer-display" style="font-size:35px; font-weight:bold; color:var(--danger);">30s</div>
+        <div id="answer-box"></div>
+        <div id="letter-box"></div>
+        
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:15px;">
+            <button class="btn" style="background:var(--unlocked); color:#000; border:none;" onclick="checkResult()">SUBMIT</button>
+            <button class="btn" style="border-color:var(--danger); color:var(--danger);" onclick="manualReshuffle()">RESHUFFLE (25)</button>
+        </div>
+        <div id="feedback" style="margin-top:10px; font-size:14px; font-weight:bold; min-height: 20px;"></div>
+    </div>
+</div>
+
+<div id="victoryModal" class="modal">
+    <div class="modal-content">
+        <h2 style="font-size: 40px; margin-bottom: 5px;">⭐⭐⭐⭐⭐</h2>
+        <h3>LEVEL CLEARED!</h3>
+        <p style="color:var(--coin); font-weight:bold; font-size: 20px;">+20 COINS</p>
+        <button class="btn" style="background:#1da1f2; color:white; border:none;" onclick="shareProgress()">📢 SHARE PROGRESS</button>
+        <button class="btn" onclick="showMap()">CONTINUE TOUR</button>
+    </div>
+</div>
+
+<div id="settingsModal" class="modal">
+    <div class="modal-content">
+        <h2 style="color:var(--accent)">SETTINGS</h2>
+        <button class="btn" style="background:#4285F4; color:white; border:none;" onclick="alert('Google Login coming soon!')">👤 LOGIN WITH GOOGLE</button>
+        <button class="btn" onclick="openModal('dailyModal'); renderDailyGrid();">📅 DAILY BONUS</button>
+        <button class="btn" onclick="toggleTheme()">🌓 THEME</button>
+        <button class="btn" style="border-color:var(--danger); color:var(--danger);" onclick="resetProgress()">RESET ALL DATA</button>
+        <button class="btn" onclick="closeModal('settingsModal')">CLOSE</button>
+    </div>
+</div>
+
+<div id="dailyModal" class="modal">
+    <div class="modal-content">
+        <h2 style="color:var(--coin)">DAILY BONUS</h2>
+        <div class="bonus-grid" id="bonus-grid"></div>
+        <button class="btn" id="claim-btn" onclick="claimDailyReward()">CLAIM REWARD</button>
+        <button class="btn" onclick="closeModal('dailyModal')">CLOSE</button>
+    </div>
+</div>
+
+<script src="words.js"></script>
+<script>
+    // --- State Variables ---
+    let secret = "", guess = "", time = 30, timerId = null;
+    let currentLvlPlaying = 1;
+    let unlocked = parseInt(localStorage.getItem("bkaUnlocked")) || 1;
+    let coins = parseInt(localStorage.getItem("bkaCoins")) || 50;
+    const dailyRewards = [6, 7, 8, 9, 10, 11, 50, 13, 14];
+    let lastClaimDate = localStorage.getItem("bkaLastClaim") || "";
+
+    // --- UI Helpers ---
+    function openModal(id) { document.getElementById(id).style.display = 'flex'; }
+    function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+    function updateStats() {
+        document.getElementById("coin-count").innerText = coins;
+        localStorage.setItem("bkaCoins", coins);
+        localStorage.setItem("bkaUnlocked", unlocked); // Crucial Save
+        document.getElementById("progress-fill").style.width = Math.min((unlocked / 500 * 100), 100) + "%";
+    }
+
+    window.onload = () => {
+        updateStats();
+        renderMap();
+        document.body.setAttribute('data-theme', localStorage.getItem('bkaTheme') || 'space');
+    };
+
+    // --- Map Logic ---
+    function renderMap() {
+        const grid = document.getElementById("level-grid");
+        grid.innerHTML = "";
+        for (let i = 1; i <= 500; i++) {
+            let n = document.createElement("div");
+            n.className = `level-node ${i <= unlocked ? 'unlocked' : 'locked'}`;
+            n.innerText = i;
+            n.onclick = () => { if (i <= unlocked) startLevel(i); };
+            grid.appendChild(n);
+        }
+    }
+
+    // --- Game Play Logic ---
+    function startLevel(lvl) {
+        if (typeof wordBank === 'undefined') { alert("words.js not loaded!"); return; }
+        currentLvlPlaying = lvl;
+        secret = wordBank[(lvl - 1) % wordBank.length].toUpperCase();
+        
+        document.getElementById("map-screen").style.display = "none";
+        document.getElementById("game-screen").style.display = "block";
+        document.getElementById("game-level-title").innerText = "LVL " + lvl;
+        
+        time = 30;
+        executeShuffle();
+        
+        if(timerId) clearInterval(timerId);
+        timerId = setInterval(() => {
+            time--;
+            document.getElementById("timer-display").innerText = time + "s";
+            if (time <= 0) { clearInterval(timerId); alert("Out of time!"); showMap(); }
+        }, 1000);
+    }
+
+    function executeShuffle() {
+        guess = "";
+        document.getElementById("answer-box").innerText = "";
+        const scrambled = scrambleUnique(secret);
+        const lb = document.getElementById("letter-box");
+        lb.innerHTML = "";
+        scrambled.split('').forEach(char => {
+            let b = document.createElement("button");
+            b.className = "tile"; b.innerText = char;
+            b.onclick = () => { 
+                guess += char; 
+                document.getElementById("answer-box").innerText = guess; 
+                b.style.visibility = "hidden"; 
+            };
+            lb.appendChild(b);
+        });
+    }
+
+    function checkResult() {
+        if (guess === secret) {
+            clearInterval(timerId);
+            coins += 20;
+            // Only advance 'unlocked' if they are playing their highest level
+            if (currentLvlPlaying === unlocked && unlocked < 500) {
+                unlocked++;
+            }
+            updateStats();
+            openModal('victoryModal');
+        } else {
+            document.getElementById("feedback").innerText = "❌ WRONG!";
+            setTimeout(() => { 
+                document.getElementById("feedback").innerText = ""; 
+                executeShuffle(); 
+            }, 800);
+        }
+    }
+
+    // --- Shop / Powerups ---
+    function manualReshuffle() {
+        if (coins >= 25) { coins -= 25; updateStats(); executeShuffle(); }
+        else { alert("Need 25 coins!"); }
+    }
+
+    function skipLevel() {
+        if (coins >= 100) {
+            if(confirm("Skip for 100 coins?")) {
+                coins -= 100;
+                if(currentLvlPlaying === unlocked && unlocked < 500) unlocked++;
+                updateStats();
+                showMap();
+            }
+        } else { alert("Need 100 coins!"); }
+    }
+
+    function buyHint() {
+        if (coins >= 20) { coins -= 20; updateStats(); alert("Starts with: " + secret[0]); }
+        else { alert("Need 20 coins!"); }
+    }
+
+    // --- Daily Bonus Logic ---
+    function renderDailyGrid() {
+        const grid = document.getElementById("bonus-grid");
+        const today = new Date().toDateString();
+        grid.innerHTML = "";
+        dailyRewards.forEach((amt, idx) => {
+            let node = document.createElement("div");
+            node.className = "bonus-node";
+            node.innerHTML = `Day ${idx+1}<br>💰${amt}`;
+            grid.appendChild(node);
+        });
+        const btn = document.getElementById("claim-btn");
+        if (lastClaimDate === today) {
+            btn.innerText = "CLAIMED TODAY";
+            btn.disabled = true;
+            btn.style.opacity = "0.5";
+        } else {
+            btn.innerText = "CLAIM REWARD";
+            btn.disabled = false;
+            btn.style.opacity = "1";
+        }
+    }
+
+    function claimDailyReward() {
+        const today = new Date().toDateString();
+        if (lastClaimDate !== today) {
+            let reward = dailyRewards[Math.floor(Math.random() * dailyRewards.length)];
+            coins += reward;
+            lastClaimDate = today;
+            localStorage.setItem("bkaLastClaim", lastClaimDate);
+            updateStats();
+            alert(`Collected 💰${reward}!`);
+            closeModal('dailyModal');
+        }
+    }
+
+    // --- Navigation & Settings ---
+    function showMap() {
+        clearInterval(timerId);
+        document.getElementById("game-screen").style.display = "none";
+        document.getElementById("map-screen").style.display = "block";
+        closeModal('victoryModal');
+        renderMap();
+    }
+
+    function toggleTheme() {
+        const next = document.body.getAttribute('data-theme') === 'space' ? 'neon' : 'space';
+        document.body.setAttribute('data-theme', next);
+        localStorage.setItem('bkaTheme', next);
+    }
+
+    function resetProgress() {
+        if(confirm("Permanently delete progress and coins?")) {
+            localStorage.clear();
+            location.reload();
+        }
+    }
+
+    function shareProgress() {
+        const text = `I'm on Level ${unlocked} in BKA Scramble! 🧩`;
+        if (navigator.share) navigator.share({ title: 'BKA Scramble', text: text, url: window.location.href });
+        else window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`);
+    }
+
+    // --- Service Worker ---
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('./sw.js').catch(err => console.log(err));
+        });
+    }
+</script>
+</body>
+</html>
