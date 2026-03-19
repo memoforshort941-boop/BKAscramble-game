@@ -1,6 +1,6 @@
 const CACHE_NAME = 'bka-scramble-v2'; 
 const ASSETS = [
-    './game.html',
+    './index.html',
     './style.css',
     './words.js',
     './manifest.json',
